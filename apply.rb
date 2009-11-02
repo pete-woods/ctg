@@ -243,7 +243,7 @@ class GitToClearcase
  attr_accessor :preview
  
   def file_message(file)
-      cmd = ["git","log","--format=format:%s%n%b",rev_options,"--",file].flatten
+      cmd = ["git","log","--reverse", "--format=format:%s%n%b",rev_options,"--",file].flatten
       Popen4.exec(*cmd).strip
   end
   
