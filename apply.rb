@@ -7,7 +7,6 @@ class Popen4
   @@active = []
 
   def self.exec(*cmd)
-    p cmd
     args = cmd.dup
     args << {:stdin => :null}
     Popen4.new(*args) do |f|
@@ -193,7 +192,7 @@ class GitChangeDelete < GitChange
   def apply(cc)
     message = cc.file_message(file)
     cc.cleartool "rmname", "-c", message, file
-    cc.cleartool "chevent", "-append", "-c", message, File.dirname(file)
+    cc.append_message File.dirname(file), message
   end
 end
 
@@ -215,8 +214,8 @@ class GitChangeRename < GitChange
   def apply(cc)
     message = cc.file_message(newfile)
     cc.cleartool "mv", "-c", message, file, newfile
-    cc.cleartool "chevent", "-append", "-c", message, File.dirname(file)
-    cc.cleartool "chevent", "-append", "-c", message, File.dirname(newfile)
+    cc.append_message File.dirname(file), message
+    cc.append_message File.dirname(newfile), message
   end
 end
 
@@ -234,6 +233,7 @@ class GitToClearcase
     @checkouts = Hash.new { |h,k| h[k] = [] }
     @mkelems = []
     @ensure_dirs = Set.new
+    @append_messages = Hash.new { |h,k| h[k] = [] }
   end
  
  attr_reader :rev_options, :view_path, :preview
@@ -246,6 +246,10 @@ class GitToClearcase
   
   def mkelem(file, message)
     @mkelems << [file, message]
+  end
+  
+  def append_message(file, message)
+    @append_messages[file] << message unless @append_messages[file].include?(message)
   end
   
   def checkout(file, message)
@@ -277,6 +281,10 @@ class GitToClearcase
  
   def process(base_rev)
     verify_no_checkouts
+    
+    if not File.directory?(".git") then
+      raise "Must run from top of git tree"
+    end
   
     @rev_options = "#{base_rev}..HEAD"
     cmd = ["git","diff","-M", "--name-status", rev_options].flatten
@@ -346,6 +354,12 @@ class GitToClearcase
     comment "Applying changes"
     @changes.each do |c|
       c.apply(self)
+    end
+    
+    @append_messages.each do |file,messages|
+      messages.each do |message|
+      	cleartool "chevent", "-append", "-c", message, file
+      end
     end
   end
   
