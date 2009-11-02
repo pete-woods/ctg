@@ -7,6 +7,7 @@ class Popen4
   @@active = []
 
   def self.exec(*cmd)
+    p cmd
     args = cmd.dup
     args << {:stdin => :null}
     Popen4.new(*args) do |f|
@@ -158,49 +159,46 @@ class GitChange
   def apply(cc)
     cmd = ["git", "diff", cc.rev_options, "--", file].flatten
     patch_data = Popen4.exec(*cmd)
-    
-    
-    Dir.chdir(@cc.view_path) do 
-      Popen4.exec("git", "apply")
+    tf = Tempfile.new("patch")
+    tf.write(patch_data)
+    tf.close
+    if not cc.preview then
+      Dir.chdir(cc.view_path) do 
+        Popen4.exec("git", "apply", tf.path)
+      end
     end
+    tf.unlink
     
-    cc.output "(cd #{Dir.pwd.shell_escape} && git diff #{cc.rev_options} -- #{file.shell_escape}) | patch -p1"
+    cc.output "(cd #{Dir.pwd.shell_escape} && git diff #{cc.rev_options} -- #{file.shell_escape}) | git apply"
   end
 end
 
 class GitChangeAdd < GitChange
-  def pre(cc)
+  def calculate_checkouts(cc)
+    if File.exists?(File.join(cc.view_path, file)) then
+      raise "File already exists that would be added #{file.inspect}"
+    end
     cc.checkout_dir File.dirname(file)
-  end
-  
-  def post(cc)
-    #cc.cleartool "mkelem", "-ci", "-c", cc.file_message(file), file
+    cc.mkelem file, cc.file_message(file)
   end
 end
-
 
 class GitChangeDelete < GitChange
-  def pre(cc)
+  def calculate_checkouts(cc)
     cc.checkout_dir File.dirname(file)
   end
-  
-  def post(cc)
-  end
-  
+    
   def apply(cc)
-    cc.cleartool "rmname", "-c", cc.file_message(file), file
+    message = cc.file_message(file)
+    cc.cleartool "rmname", "-c", message, file
+    cc.cleartool "chevent", "-append", "-c", message, File.dirname(file)
   end
 end
 
-
 class GitChangeModify < GitChange
-  def pre(cc)
+  def calculate_checkouts(cc)
     cc.checkout file, cc.file_message(file)
-  end
-  
-  def post(cc)
-  end
-  
+  end  
 end
 
 class GitToClearcase
@@ -209,14 +207,19 @@ class GitToClearcase
     @preview = true
     @dirs_checked_out = Set.new
     @checkouts = Hash.new { |h,k| h[k] = [] }
+    @mkelems = []
   end
  
- attr_reader :rev_options, :view_path
+ attr_reader :rev_options, :view_path, :preview
  attr_accessor :preview
  
   def file_message(file)
       cmd = ["git","log","--format=format:%s%n%b",rev_options,"--",file].flatten
       Popen4.exec(*cmd).strip
+  end
+  
+  def mkelem(file, message)
+    @mkelems << [file, message]
   end
   
   def checkout(file, message)
@@ -262,23 +265,22 @@ class GitToClearcase
       end
     end
     
-
     comment "Checking out files/directories"
     @changes.each do |c|
-      c.pre(self)
+      c.calculate_checkouts(self)
     end
-
 
     @checkouts.each do |message,files|
       cleartool "co", "-c", message, *files
     end
     
-    do_apply
-    do_checkin
-    @changes.each do |c|
-      c.post(self)
+    @mkelems.each do |file, message|
+      cleartool "mkelem", "-c", message, file
+      File.unlink(File.join(view_path,file))
     end
     
+    do_apply
+    #do_checkin
   end
 
   def do_apply
@@ -316,7 +318,8 @@ class GitToClearcase
     show_command "cleartool", *args
     if not @preview then
       Dir.chdir(@view_path) do
-        Popen4.exec(*args).read
+        cmd = ["cleartool"] + args
+        Popen4.exec(*cmd)
       end
     end
   end
@@ -335,7 +338,7 @@ if __FILE__ == $0 then
   preview = true
   ARGV.options do |opts|
     opts.on("--exec","Actually execute commands") { preview = false }
-    
+
     opts.banner = "Usage: apply [options] VIEW_PATH REV_RANGE"
     opts.parse!
   end
