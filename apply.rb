@@ -175,6 +175,8 @@ end
 
 class GitChangeAdd < GitChange
   def calculate_checkouts(cc)
+    cc.ensure_dirs File.dirname(file)
+    
     if File.exists?(File.join(cc.view_path, file)) then
       raise "File already exists that would be added #{file.inspect}"
     end
@@ -195,6 +197,29 @@ class GitChangeDelete < GitChange
   end
 end
 
+class GitChangeRename < GitChange
+  def initialize(file, newfile)
+    super(file)
+    @newfile = newfile
+  end
+  
+  attr_reader :newfile
+  
+  def calculate_checkouts(cc)
+    cc.ensure_dirs File.dirname(file)
+    cc.ensure_dirs File.dirname(newfile)
+    cc.checkout_dir File.dirname(file)
+    cc.checkout_dir File.dirname(newfile)
+  end
+    
+  def apply(cc)
+    message = cc.file_message(newfile)
+    cc.cleartool "mv", "-c", message, file, newfile
+    cc.cleartool "chevent", "-append", "-c", message, File.dirname(file)
+    cc.cleartool "chevent", "-append", "-c", message, File.dirname(newfile)
+  end
+end
+
 class GitChangeModify < GitChange
   def calculate_checkouts(cc)
     cc.checkout file, cc.file_message(file)
@@ -208,6 +233,7 @@ class GitToClearcase
     @dirs_checked_out = Set.new
     @checkouts = Hash.new { |h,k| h[k] = [] }
     @mkelems = []
+    @ensure_dirs = Set.new
   end
  
  attr_reader :rev_options, :view_path, :preview
@@ -229,7 +255,17 @@ class GitToClearcase
   def checkin(file)
     @checkins[message] << file
   end
+  
+  def ensure_dirs(dir)
+    @ensure_dirs.add(dir)
+  end
  
+  def checkout_dir(dir)
+    if not @dirs_checked_out.include?(dir) then
+      @dirs_checked_out.add(dir)
+    end
+  end
+
   def verify_no_checkouts
     checkouts = Dir.chdir(@view_path) do
       Popen4.exec "cleartool", "lsco", "-recurse"
@@ -239,20 +275,17 @@ class GitToClearcase
     end
   end
  
-  def process(rev_options)
+  def process(base_rev)
     verify_no_checkouts
   
-    @rev_options = rev_options
-    if @rev_options.length==1 and @rev_options[0] !~ /\.\./ then
-      @rev_options[0] = @rev_options[0] + ".."
-    end
-    cmd = ["git","diff","--name-status", rev_options].flatten
+    @rev_options = "#{base_rev}..HEAD"
+    cmd = ["git","diff","-M", "--name-status", rev_options].flatten
     text = Popen4.exec(*cmd)
     edits = text.split("\n").map { |line| line.chomp("\n").split("\t") }
 
     @changes = []
 
-    edits.each do |status, file|
+    edits.each do |status, file, newfile|
       case status
       when "A"
         @changes << GitChangeAdd.new(file)
@@ -260,14 +293,29 @@ class GitToClearcase
         @changes << GitChangeModify.new(file)
       when "D"
         @changes << GitChangeDelete.new(file)
+      when /^R100/
+        @changes << GitChangeRename.new(file, newfile)
       else
         raise "Unknown status #{status}"
       end
     end
     
+    if @changes.empty? then
+      comment "Nothing to do"
+      return
+    end
+    
     comment "Checking out files/directories"
     @changes.each do |c|
       c.calculate_checkouts(self)
+    end
+
+    @dirs_checked_out.each do |dir|
+       cleartool "co", "-nc", dir if is_versioned?(dir)
+    end
+    
+    @ensure_dirs.each do |d|
+      do_ensure_dir(d)
     end
 
     @checkouts.each do |message,files|
@@ -276,11 +324,22 @@ class GitToClearcase
     
     @mkelems.each do |file, message|
       cleartool "mkelem", "-c", message, file
-      File.unlink(File.join(view_path,file))
+      File.unlink(File.join(view_path,file)) if not preview
     end
     
     do_apply
     #do_checkin
+  end
+  
+  def is_versioned?(f)
+    return File.exists?(File.join(view_path,f + "@@"))
+  end
+
+  def do_ensure_dir(d)
+    if d != '.' and not is_versioned?(d) then
+      do_ensure_dir(File.dirname(d))
+      cleartool "mkdir", "-nc", d
+    end
   end
 
   def do_apply
@@ -324,12 +383,6 @@ class GitToClearcase
     end
   end
 
-  def checkout_dir(dir)
-    if not @dirs_checked_out.include?(dir) then
-      @dirs_checked_out.add(dir)
-      cleartool "co", "-nc", dir
-    end
-  end
 end
 
 if __FILE__ == $0 then
@@ -339,20 +392,20 @@ if __FILE__ == $0 then
   ARGV.options do |opts|
     opts.on("--exec","Actually execute commands") { preview = false }
 
-    opts.banner = "Usage: apply [options] VIEW_PATH REV_RANGE"
+    opts.banner = "Usage: apply [options] VIEW_PATH BASE_REV"
     opts.parse!
   end
   
   view_path = ARGV.shift
-  rev_range = ARGV
+  base_rev = ARGV.shift
   
-  if not view_path or not File.directory?(view_path) or rev_range.empty? then
+  if not view_path or not File.directory?(view_path) or not base_rev then
     puts ARGV.options
     exit 1
   end
   
   gcc = GitToClearcase.new(view_path)
   gcc.preview = preview
-  gcc.process(rev_range)
+  gcc.process(base_rev)
 
 end
