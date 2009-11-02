@@ -149,6 +149,8 @@ class String
   end
 end
 
+
+$PATCH_COUNTER = 0
 class GitChange
   def initialize(file)
     @file = file
@@ -158,7 +160,8 @@ class GitChange
   def apply(cc)
     cmd = ["git", "diff", cc.rev_options, "--", file].flatten
     patch_data = Popen4.exec(*cmd)
-    tf = Tempfile.new("patch")
+    tf = Tempfile.new("patch#{$PATCH_COUNTER}")
+    $PATCH_COUNTER += 1
     tf.write(patch_data)
     tf.close
     if not cc.preview then
@@ -270,17 +273,19 @@ class GitToClearcase
     end
   end
 
-  def verify_no_checkouts
-    checkouts = Dir.chdir(@view_path) do
-      Popen4.exec "cleartool", "lsco", "-recurse"
+  def cleartool_n(*args)
+    Dir.chdir(@view_path) do
+      cmd = ["cleartool"] + args
+      Popen4.exec *cmd
     end
-    if not checkouts.strip.empty? then
-      raise "Must not be any checkouts. Try: ct lsco -recurse -fmt %Bn\\n | xargs cleartool unco -rm"
-    end
+  end
+
+  def lsco
+    cleartool_n("lsco", "-recurse", "-fmt", "%Bn\\n").split("\n")
   end
  
   def process(base_rev)
-    verify_no_checkouts
+    @existing_checkouts = lsco
     
     if not File.directory?(".git") then
       raise "Must run from top of git tree"
@@ -317,9 +322,19 @@ class GitToClearcase
     @changes.each do |c|
       c.calculate_checkouts(self)
     end
-
+    
+    remaining_checkouts = @existing_checkouts - @checkouts.values.flatten - @mkelems.map { |f,m| f }
+    if remaining_checkouts.size > 0 then
+      puts remaining_checkouts
+      raise "Existing checkouts for files not in the changeset"
+    end
+    
     @dirs_checked_out.each do |dir|
-       cleartool "co", "-nc", dir if is_versioned?(dir)
+       if @existing_checkouts.include?(dir) then
+         comment "Already checked out: #{dir}"
+       else
+         cleartool "co", "-nc", dir if is_versioned?(dir)
+       end
     end
     
     @ensure_dirs.each do |d|
@@ -327,11 +342,31 @@ class GitToClearcase
     end
 
     @checkouts.each do |message,files|
-      cleartool "co", "-c", message, *files
+      remaining_files = []
+      files.each do |file|
+        if @existing_checkouts.include?(file) then
+	  comment "Already checked out: #{file}"
+	  cleartool "chevent", "-replace", "-c", message, file
+	  predecessor = cleartool_n("describe", "-fmt", "%f", file)
+	  view_file = File.join(view_path, file)
+	  File.unlink(view_file) if not preview
+	  cleartool "get", "-to", file, "#{file}@@#{predecessor}"
+	  File.chmod(File.stat(view_file).mode | 0200, view_file) if not preview
+	else
+	  remaining_files << file
+	end
+      end
+      if remaining_files.size > 0 then
+        cleartool "co", "-c", message, *remaining_files
+      end
     end
     
     @mkelems.each do |file, message|
-      cleartool "mkelem", "-c", message, file
+      if @existing_checkouts.include?(file) then
+        cleartool "chevent", "-replace", "-c", message, file
+      else
+        cleartool "mkelem", "-c", message, file
+      end
       File.unlink(File.join(view_path,file)) if not preview
     end
     
