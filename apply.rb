@@ -323,6 +323,10 @@ class GitToClearcase
       c.calculate_checkouts(self)
     end
     
+    @ensure_dirs.each do |d|
+      do_ensure_dir_checkout(d)
+    end
+
     remaining_checkouts = @existing_checkouts - @checkouts.values.flatten - @mkelems.map { |f,m| f }
     if remaining_checkouts.size > 0 then
       puts remaining_checkouts
@@ -376,6 +380,16 @@ class GitToClearcase
   
   def is_versioned?(f)
     return File.exists?(File.join(view_path,f + "@@"))
+  end
+
+  def do_ensure_dir_checkout(d)
+    if d != '.' then
+      if not is_versioned?(d) and is_versioned?(File.dirname(d)) then
+        checkout_dir(File.dirname(d))
+      else
+        do_ensure_dir_checkout(File.dirname(d))
+      end
+    end
   end
 
   def do_ensure_dir(d)
