@@ -2,6 +2,7 @@ require 'thread'
 require 'set'
 require 'tempfile'
 require 'optparse'
+require 'fileutils'
 
 class Popen4
   @@active = []
@@ -158,20 +159,12 @@ class GitChange
   attr_reader :file
   
   def apply(cc)
-    cmd = ["git", "diff", cc.rev_options, "--", file].flatten
-    patch_data = Popen4.exec(*cmd)
-    tf = Tempfile.new("patch#{$PATCH_COUNTER}")
-    $PATCH_COUNTER += 1
-    tf.write(patch_data)
-    tf.close
     if not cc.preview then
-      Dir.chdir(cc.view_path) do 
-        Popen4.exec("git", "apply", tf.path)
-      end
+      # TODO - confirm that old file is same as base
+      FileUtils.cp(file, File.join(cc.view_path, file))
     end
-    tf.unlink
-    
-    cc.output "(cd #{Dir.pwd.shell_escape} && git diff #{cc.rev_options} -- #{file.shell_escape}) | git apply"
+
+    cc.output "cp -f #{File.join(Dir.pwd,file).shell_escape} #{file.shell_escape}"
   end
 end
 
@@ -281,7 +274,7 @@ class GitToClearcase
   end
 
   def lsco
-    cleartool_n("lsco", "-recurse", "-fmt", "%Bn\\n").split("\n")
+    cleartool_n("lsco", "-recurse", "-fmt", "%Bn\\n").split("\n").map { |e| e.gsub(%r{^\./},'') }
   end
  
   def process(base_rev)
@@ -308,8 +301,16 @@ class GitToClearcase
         @changes << GitChangeDelete.new(file)
       when /^R100/
         @changes << GitChangeRename.new(file, newfile)
+      when /^R(.\d+)/
+        if $1.to_i >= 50 then
+          @changes << GitChangeRename.new(file, newfile)
+	  @changes << GitChangeModify.new(newfile)
+	else
+	  @changes << GitChangeDelete.new(file)
+	  @changes << GitChangeAdd.new(file)
+	end
       else
-        raise "Unknown status #{status}"
+        raise "Unknown status #{status} #{file} #{newfile}"
       end
     end
     
@@ -353,9 +354,10 @@ class GitToClearcase
 	  cleartool "chevent", "-replace", "-c", message, file
 	  predecessor = cleartool_n("describe", "-fmt", "%f", file)
 	  view_file = File.join(view_path, file)
-	  File.unlink(view_file) if not preview
-	  cleartool "get", "-to", file, "#{file}@@#{predecessor}"
-	  File.chmod(File.stat(view_file).mode | 0200, view_file) if not preview
+	  File.unlink(view_file) if not preview and File.exists?(view_file)
+	  # Don't get any more because we copy file directly
+	  #cleartool "get", "-to", file, "#{file}@@#{predecessor}"
+	  #File.chmod(File.stat(view_file).mode | 0200, view_file) if not preview
 	else
 	  remaining_files << file
 	end
