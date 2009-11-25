@@ -143,7 +143,7 @@ end
 class String
   def shell_escape
     if self !~ /^[-a-zA-Z0-9_.\/]+$/ then
-      "'" + self.gsub("'","'\''") + "'"
+      "'" + self.gsub("'","'\\\\''") + "'"
     else
       self
     end
