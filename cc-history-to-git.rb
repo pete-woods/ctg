@@ -1,3 +1,5 @@
+#! /usr/bin/env ruby
+
 require 'cc-history'
 require 'fileutils'
 
