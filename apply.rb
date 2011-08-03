@@ -276,11 +276,22 @@ class GitToClearcase
   end
 
   def lsco
-    cleartool_n("lsco", "-recurse", "-fmt", "%Bn\\n").split("\n").map { |e| e.gsub(%r{^\./},'') }
+    my_checkouts = Set.new
+    other_checkouts = Set.new
+    cleartool_n("lsco", "-recurse", "-fmt", "%Bn,%Lu\\n").split("\n").each do |e|
+      path, user = e.split(",")
+      path.gsub!(%r{^\./},'')
+      if user.start_with?(ENV['USER']) then
+        my_checkouts << path
+      else
+        other_checkouts << path
+      end
+    end
+    return my_checkouts, other_checkouts
   end
  
   def process(base_rev)
-    @existing_checkouts = lsco
+    @my_checkouts, @other_checkouts = lsco
     
     if not File.directory?(".git") then
       raise "Must run from top of git tree"
@@ -330,14 +341,14 @@ class GitToClearcase
       do_ensure_dir_checkout(d)
     end
 
-    remaining_checkouts = @existing_checkouts - @checkouts.values.flatten - @mkelems.map { |f,m| f }
+    remaining_checkouts = (@checkouts.values.flatten.to_set + @mkelems.map { |f,m| f }.to_set).intersection @other_checkouts
     if remaining_checkouts.size > 0 then
-      puts remaining_checkouts
-      raise "Existing checkouts for files not in the changeset"
+      puts remaining_checkouts.entries
+      raise "Existing checkouts by someome else for files in the changeset"
     end
     
     @dirs_checked_out.each do |dir|
-       if @existing_checkouts.include?(dir) then
+       if @my_checkouts.include?(dir) then
          comment "Already checked out: #{dir}"
        else
          cleartool "co", "-nc", dir if is_versioned?(dir)
@@ -351,7 +362,7 @@ class GitToClearcase
     @checkouts.each do |message,files|
       remaining_files = []
       files.each do |file|
-        if @existing_checkouts.include?(file) then
+        if @my_checkouts.include?(file) then
 	  comment "Already checked out: #{file}"
 	  cleartool "chevent", "-replace", "-c", message, file
 	  predecessor = cleartool_n("describe", "-fmt", "%f", file)
@@ -370,7 +381,7 @@ class GitToClearcase
     end
     
     @mkelems.each do |file, message|
-      if @existing_checkouts.include?(file) then
+      if @my_checkouts.include?(file) then
         cleartool "chevent", "-replace", "-c", message, file
       else
         cleartool "mkelem", "-c", message, file
