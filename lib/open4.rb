@@ -15,7 +15,7 @@ class Popen4
       if status != 0 then
         raise "#{cmd.join(" ")} failed with #{status}"
       end
-      result
+      return result
     end
   end
 
