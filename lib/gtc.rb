@@ -16,6 +16,8 @@ class String
   end
 end
 
+module GitToClearCase
+
 $PATCH_COUNTER = 0
 class GitChange
   def initialize(file)
@@ -325,28 +327,5 @@ class GitToClearcase
   end
 
 end
-
-if __FILE__ == $0 then
-  view_path = nil
-  rev_range = nil
-  preview = true
-  ARGV.options do |opts|
-    opts.on("--exec","Actually execute commands") { preview = false }
-
-    opts.banner = "Usage: apply [options] VIEW_PATH BASE_REV"
-    opts.parse!
-  end
-  
-  view_path = ARGV.shift
-  base_rev = ARGV.shift
-  
-  if not view_path or not File.directory?(view_path) or not base_rev then
-    puts ARGV.options
-    exit 1
-  end
-  
-  gcc = GitToClearcase.new(view_path)
-  gcc.preview = preview
-  gcc.process(base_rev)
 
 end
