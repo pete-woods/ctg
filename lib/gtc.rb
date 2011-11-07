@@ -91,6 +91,7 @@ class GitToClearcase
   def initialize(view_path)
     @view_path = view_path
     @preview = true
+    @checkin = false
     @dirs_checked_out = Set.new
     @checkouts = Hash.new { |h,k| h[k] = [] }
     @mkelems = []
@@ -99,7 +100,7 @@ class GitToClearcase
   end
  
  attr_reader :rev_options, :view_path, :preview
- attr_accessor :preview
+ attr_accessor :preview, :checkin
  
   def file_message(file)
       cmd = ["git","log","--reverse", "--format=format:%s%n%b",rev_options,"--",file].flatten
@@ -116,10 +117,6 @@ class GitToClearcase
   
   def checkout(file, message)
     @checkouts[message] << file
-  end
-  
-  def checkin(file)
-    @checkins[message] << file
   end
   
   def ensure_dirs(dir)
@@ -254,7 +251,9 @@ class GitToClearcase
     end
     
     do_apply
-    #do_checkin
+    if @checkin then
+      do_checkin
+    end
   end
   
   def is_versioned?(f)
@@ -293,7 +292,7 @@ class GitToClearcase
   
   def do_checkin
     comment "Checking in files"
-    @checkins.values.each do |files|
+    @checkouts.values.each do |files|
       cleartool "ci", "-nc", *files
     end
     

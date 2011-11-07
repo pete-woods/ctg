@@ -9,8 +9,10 @@ if __FILE__ == $0 then
   view_path = nil
   rev_range = nil
   preview = true
+  checkin = false
   ARGV.options do |opts|
     opts.on("--exec","Actually execute commands") { preview = false }
+    opts.on("--checkin","Also check in changes") { checkin = true }
 
     opts.banner = "Usage: #{__FILE__} [options] VIEW_PATH BASE_REV"
     opts.parse!
@@ -26,6 +28,7 @@ if __FILE__ == $0 then
 
   gcc = GitToClearCase::GitToClearcase.new(view_path)
   gcc.preview = preview
+  gcc.checkin = checkin
   gcc.process(base_rev)
 
 end
