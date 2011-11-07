@@ -94,7 +94,7 @@ class GitToClearcase
     @checkin = false
     @dirs_checked_out = Set.new
     @checkouts = Hash.new { |h,k| h[k] = [] }
-    @mkelems = []
+    @mkelems = {}
     @ensure_dirs = Set.new
     @append_messages = Hash.new { |h,k| h[k] = [] }
   end
@@ -296,6 +296,11 @@ class GitToClearcase
       cleartool "ci", "-nc", *files
     end
     
+    comment "Checking in new files"
+    if @mkelems.size > 0 then
+      cleartool "ci", "-nc", *@mkelems.keys
+    end
+
     comment "Checking in directories"
     @dirs_checked_out.each do |dir|
       cleartool "ci", "-nc", dir
