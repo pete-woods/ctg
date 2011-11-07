@@ -142,7 +142,7 @@ class GitToClearcase
   def lsco
     my_checkouts = Set.new
     other_checkouts = Set.new
-    cleartool_n("lsco", "-recurse", "-fmt", "%Bn,%Lu\\n").split("\n").each do |e|
+    cleartool_n("lsco", "-cview", "-recurse", "-fmt", "%Bn,%Lu\\n").split("\n").each do |e|
       path, user = e.split(",")
       path.gsub!(%r{^\./},'')
       if user.start_with?(ENV['USER']) then
