@@ -3,6 +3,7 @@
 $LOAD_PATH.unshift File.join(File.dirname(File.dirname(File.expand_path(__FILE__))), "lib")
 
 require 'gtc'
+require 'optparse'
 
 if __FILE__ == $0 then
   view_path = nil
@@ -11,7 +12,7 @@ if __FILE__ == $0 then
   ARGV.options do |opts|
     opts.on("--exec","Actually execute commands") { preview = false }
 
-    opts.banner = "Usage: apply [options] VIEW_PATH BASE_REV"
+    opts.banner = "Usage: #{__FILE__} [options] VIEW_PATH BASE_REV"
     opts.parse!
   end
 

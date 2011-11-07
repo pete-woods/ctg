@@ -3,7 +3,6 @@
 require 'open4'
 require 'set'
 require 'tempfile'
-require 'optparse'
 require 'fileutils'
 
 class String

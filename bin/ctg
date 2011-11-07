@@ -3,9 +3,27 @@
 $LOAD_PATH.unshift File.join(File.dirname(File.dirname(File.expand_path(__FILE__))), "lib")
 
 require 'ctg'
+require 'optparse'
 
 if __FILE__ == $0 then
-    parser = ClearCase::HistoryParser.new(*ARGV)
+    root = nil
+    branch = nil
+    since = nil
+    ARGV.options do |opts|
+        opts.banner = "Usage: #{__FILE__} ROOT BRANCH SINCE"
+        opts.parse!
+    end
+
+    root = ARGV.shift
+    branch = ARGV.shift
+    since = ARGV.shift
+
+    if not root or not File.directory?(root) or not branch then
+        puts ARGV.options
+        exit 1
+    end
+
+    parser = ClearCase::HistoryParser.new(root, branch, since)
 
     def commit(author, date, comment)
         commitfile = ".commit-tmp"
