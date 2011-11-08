@@ -32,6 +32,9 @@ class GitChange
 
     cc.output "cp -f #{File.join(Dir.pwd,file).shell_escape} #{file.shell_escape}"
   end
+
+  def calculate_post_apply_checkouts(cc)
+  end
 end
 
 class GitChangeAdd < GitChange
@@ -59,9 +62,11 @@ class GitChangeDelete < GitChange
 end
 
 class GitChangeRename < GitChange
-  def initialize(file, newfile)
+  def initialize(file, newfile, post_checkout=false)
+    puts "Rename #{file}=>#{newfile}"
     super(file)
     @newfile = newfile
+    @post_checkout = post_checkout
   end
   
   attr_reader :newfile
@@ -78,6 +83,12 @@ class GitChangeRename < GitChange
     cc.cleartool "mv", "-c", message, file, newfile
     cc.append_message File.dirname(file), message
     cc.append_message File.dirname(newfile), message
+
+    super.apply(cc) if @post_checkout
+  end
+
+  def calculate_post_apply_checkouts(cc)
+    cc.checkout_post_apply newfile, cc.file_message(newfile) if @post_checkout
   end
 end
 
@@ -94,6 +105,7 @@ class GitToClearcase
     @checkin = false
     @dirs_checked_out = Set.new
     @checkouts = Hash.new { |h,k| h[k] = [] }
+    @checkouts_post_apply = Hash.new { |h,k| h[k] = [] }
     @mkelems = {}
     @ensure_dirs = Set.new
     @append_messages = Hash.new { |h,k| h[k] = [] }
@@ -117,6 +129,10 @@ class GitToClearcase
   
   def checkout(file, message)
     @checkouts[message] << file
+  end
+
+  def checkout_post_apply(file, message)
+    @checkouts_post_apply[message] << file
   end
   
   def ensure_dirs(dir)
@@ -177,8 +193,7 @@ class GitToClearcase
         @changes << GitChangeRename.new(file, newfile)
       when /^R(.\d+)/
         if $1.to_i >= 50 then
-          @changes << GitChangeRename.new(file, newfile)
-	  @changes << GitChangeModify.new(newfile)
+          @changes << GitChangeRename.new(file, newfile, true)
 	else
 	  @changes << GitChangeDelete.new(file)
 	  @changes << GitChangeAdd.new(file)
@@ -193,11 +208,17 @@ class GitToClearcase
       return
     end
     
-    comment "Checking out files/directories"
+    comment "Calculating checkouts for files/directories"
     @changes.each do |c|
       c.calculate_checkouts(self)
     end
-    
+
+    comment "Calculating post-checkouts for files/directories"
+    @changes.each do |c|
+      c.calculate_post_apply_checkouts(self)
+    end
+
+    comment "Ensuring directories checked out"    
     @ensure_dirs.each do |d|
       do_ensure_dir_checkout(d)
     end
@@ -220,7 +241,32 @@ class GitToClearcase
       do_ensure_dir(d)
     end
 
-    @checkouts.each do |message,files|
+    comment "Checking out files"
+    do_checkouts @checkouts
+    
+    comment "Creating new files"
+    @mkelems.each do |file, message|
+      if @my_checkouts.include?(file) then
+        cleartool "chevent", "-replace", "-c", message, file
+      else
+        cleartool "mkelem", "-c", message, file
+      end
+      File.unlink(File.join(view_path,file)) if not preview
+    end
+    
+    comment "Applying changes"
+    do_apply
+
+    comment "Checking in post apply files"
+    do_checkouts @checkouts_post_apply
+
+    if @checkin then
+      do_checkin
+    end
+  end
+
+  def do_checkouts(checkouts)
+    checkouts.each do |message,files|
       remaining_files = []
       files.each do |file|
         if @my_checkouts.include?(file) then
@@ -240,22 +286,8 @@ class GitToClearcase
         cleartool "co", "-c", message, *remaining_files
       end
     end
-    
-    @mkelems.each do |file, message|
-      if @my_checkouts.include?(file) then
-        cleartool "chevent", "-replace", "-c", message, file
-      else
-        cleartool "mkelem", "-c", message, file
-      end
-      File.unlink(File.join(view_path,file)) if not preview
-    end
-    
-    do_apply
-    if @checkin then
-      do_checkin
-    end
   end
-  
+
   def is_versioned?(f)
     return File.exists?(File.join(view_path,f + "@@"))
   end
@@ -293,6 +325,9 @@ class GitToClearcase
   def do_checkin
     comment "Checking in files"
     @checkouts.values.each do |files|
+      cleartool "ci", "-nc", *files
+    end
+    @checkouts_post_apply.values.each do |files|
       cleartool "ci", "-nc", *files
     end
     
