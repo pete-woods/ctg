@@ -106,7 +106,7 @@ class GitToClearcase
     @dirs_checked_out = Set.new
     @checkouts = Hash.new { |h,k| h[k] = [] }
     @checkouts_post_apply = Hash.new { |h,k| h[k] = [] }
-    @mkelems = {}
+    @mkelems = Hash.new { |h,k| h[k] = [] }
     @ensure_dirs = Set.new
     @append_messages = Hash.new { |h,k| h[k] = [] }
   end
@@ -120,7 +120,7 @@ class GitToClearcase
   end
   
   def mkelem(file, message)
-    @mkelems << [file, message]
+    @mkelems[message] << file
   end
   
   def append_message(file, message)
@@ -223,7 +223,8 @@ class GitToClearcase
       do_ensure_dir_checkout(d)
     end
 
-    remaining_checkouts = (@checkouts.values.flatten.to_set + @mkelems.map { |f,m| f }.to_set).intersection @other_checkouts
+    remaining_checkouts = (@checkouts.values.flatten.to_set.union(
+            @mkelems.values.flatten.to_set)).intersection @other_checkouts
     if remaining_checkouts.size > 0 then
       puts remaining_checkouts.entries
       raise "Existing checkouts by someome else for files in the changeset"
@@ -245,13 +246,15 @@ class GitToClearcase
     do_checkouts @checkouts
     
     comment "Creating new files"
-    @mkelems.each do |file, message|
-      if @my_checkouts.include?(file) then
-        cleartool "chevent", "-replace", "-c", message, file
-      else
-        cleartool "mkelem", "-c", message, file
+    @mkelems.each do |message, files|
+      files.each do |file|
+        if @my_checkouts.include?(file) then
+          cleartool "chevent", "-replace", "-c", message, file
+        else
+          cleartool "mkelem", "-c", message, file
+        end
+        File.unlink(File.join(view_path,file)) if not preview
       end
-      File.unlink(File.join(view_path,file)) if not preview
     end
     
     comment "Applying changes"
@@ -332,8 +335,8 @@ class GitToClearcase
     end
     
     comment "Checking in new files"
-    if @mkelems.size > 0 then
-      cleartool "ci", "-nc", *@mkelems.keys
+    @mkelems.values.each do |files|
+      cleartool "ci", "-nc", *files
     end
 
     comment "Checking in directories"
